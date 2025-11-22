@@ -16,6 +16,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// 👇 Root Route for testing deployment
+app.get("/", (req, res) => {
+  res.send("Backend API is running 🚀");
+});
+
 // MongoDB connection
 if (!process.env.MONGODB_URI) {
   console.error('MONGODB_URI is not defined in environment variables');
@@ -53,9 +58,6 @@ mongoose.connect(process.env.MONGODB_URI)
   app.use('/api/data', auth, require('./routes/data'));
   app.use('/api/purchase', auth, require('./routes/purchase'));
   app.use('/api/profile', require('./routes/profile'));
-
-  // Note: we intentionally avoid running a global rebuild on startup.
-  // Daily requirements are updated incrementally when requests are approved.
 
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
