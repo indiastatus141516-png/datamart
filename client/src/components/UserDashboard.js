@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useContext } from 'react';
-import SwipeableViews from 'react-swipeable-views';
+
 import {
   Container, Typography, Grid, Card, CardContent, Button,
   Select, MenuItem, FormControl, InputLabel, Alert, Table,
