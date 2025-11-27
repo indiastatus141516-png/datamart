@@ -1,13 +1,12 @@
 
 import React, { useState, useEffect, useContext } from 'react';
-
 import {
   Container, Typography, Grid, Card, CardContent, Button,
   Select, MenuItem, FormControl, InputLabel, Alert, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, TextField,
   Box, Avatar, Chip, IconButton, Divider, Badge,
   Tabs, Tab, AppBar, InputAdornment, Toolbar, Drawer, List,
-  ListItem, ListItemIcon, ListItemText, Fab, Fade, Zoom,
+  ListItem, ListItemIcon, ListItemText,
   Dialog, DialogTitle, DialogContent, DialogActions
 } from '@mui/material';
 import {
@@ -201,8 +200,6 @@ const UserDashboard = () => {
     } catch (e) {
       // ignore - individual promises set availability
     }
-
-    setRequestDayAvailability(next);
   };
 
   const loadPurchased = async () => {
@@ -469,7 +466,6 @@ const UserDashboard = () => {
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: '#f8f9fa', py: 4 }}>
-      {/* App Bar with Menu Button */}
       <AppBar position="static" sx={{ bgcolor: 'primary.main', mb: 4 }}>
         <Toolbar>
           <IconButton
@@ -481,9 +477,62 @@ const UserDashboard = () => {
           >
             <MenuIcon />
           </IconButton>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            DataMartX Dashboard
-          </Typography>
+          <Box sx={{ flexGrow: 1 }}>
+            <Tabs
+              value={activeTab}
+              onChange={handleTabChange}
+              indicatorColor="secondary"
+              textColor="inherit"
+              variant="fullWidth"
+              sx={{ minHeight: 64 }}
+            >
+              <Tab
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <DashboardIcon sx={{ mr: 1 }} />
+                    Dashboard
+                  </Box>
+                }
+                sx={{ minHeight: 64 }}
+              />
+              <Tab
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <ShoppingCartIcon sx={{ mr: 1 }} />
+                    Request Data Purchase
+                  </Box>
+                }
+                sx={{ minHeight: 64 }}
+              />
+              <Tab
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <CreditCardIcon sx={{ mr: 1 }} />
+                    Purchase Requests ({filteredRequests.length})
+                  </Box>
+                }
+                sx={{ minHeight: 64 }}
+              />
+              <Tab
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <DownloadIcon sx={{ mr: 1 }} />
+                    Purchased Data ({filteredPurchased.length})
+                  </Box>
+                }
+                sx={{ minHeight: 64 }}
+              />
+              <Tab
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <PersonIcon sx={{ mr: 1 }} />
+                    Profile
+                  </Box>
+                }
+                sx={{ minHeight: 64 }}
+              />
+            </Tabs>
+          </Box>
           <Typography variant="body1" sx={{ mr: 2 }}>
             Welcome, {user?.email}
           </Typography>
@@ -566,62 +615,6 @@ const UserDashboard = () => {
           boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
           background: 'linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%)'
         }}>
-              <AppBar position="static" sx={{ borderRadius: '12px 12px 0 0', bgcolor: 'primary.main' }}>
-                <Tabs
-                  value={activeTab}
-                  onChange={handleTabChange}
-                  indicatorColor="secondary"
-                  textColor="inherit"
-                  variant="fullWidth"
-                  sx={{ borderRadius: '12px 12px 0 0' }}
-                >
-                  <Tab
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <DashboardIcon sx={{ mr: 1 }} />
-                        Dashboard
-                      </Box>
-                    }
-                    sx={{ minHeight: 64 }}
-                  />
-                  <Tab
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <ShoppingCartIcon sx={{ mr: 1 }} />
-                        Request Data Purchase
-                      </Box>
-                    }
-                    sx={{ minHeight: 64 }}
-                  />
-                  <Tab
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <CreditCardIcon sx={{ mr: 1 }} />
-                        Purchase Requests ({filteredRequests.length})
-                      </Box>
-                    }
-                    sx={{ minHeight: 64 }}
-                  />
-                  <Tab
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <DownloadIcon sx={{ mr: 1 }} />
-                        Purchased Data ({filteredPurchased.length})
-                      </Box>
-                    }
-                    sx={{ minHeight: 64 }}
-                  />
-                  <Tab
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <PersonIcon sx={{ mr: 1 }} />
-                        Profile
-                      </Box>
-                    }
-                    sx={{ minHeight: 64 }}
-                  />
-                </Tabs>
-              </AppBar>
 
               {/* Filter Section */}
               {(activeTab === 2 || activeTab === 3) && (
@@ -685,14 +678,8 @@ const UserDashboard = () => {
                 </CardContent>
               )}
 
-              <SwipeableViews
-                axis="x"
-                index={activeTab}
-                onChangeIndex={setActiveTab}
-                style={{ overflow: 'hidden' }}
-              >
-                {/* Dashboard Tab */}
-                <Box sx={{ p: 3 }}>
+              {/* Dashboard Tab */}
+              {activeTab === 0 && <Box sx={{ p: 3 }}>
                   <Typography variant="h4" sx={{ mb: 4, fontWeight: 'bold', color: 'primary.main' }}>
                     Welcome to DataMartX
                   </Typography>
@@ -822,9 +809,10 @@ const UserDashboard = () => {
                     </Grid>
                   </Grid>
                 </Box>
+                }
 
                 {/* Request Data Purchase Tab */}
-                <Box sx={{ p: 3 }}>
+                {activeTab === 1 && <Box sx={{ p: 3 }}>
                   <Typography variant="h5" sx={{ mb: 4, fontWeight: 'bold', color: 'primary.main' }}>
                     Request Weekly Data Purchase
                   </Typography>
@@ -1110,10 +1098,10 @@ const UserDashboard = () => {
                       </Button>
                     </DialogActions>
                   </Dialog>
-                </Box>
+                </Box>}
 
                 {/* Purchase Requests Tab */}
-                <Box sx={{ p: 3 }}>
+                {activeTab === 2 && <Box sx={{ p: 3 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                     <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
                       Purchase Requests
@@ -1127,7 +1115,6 @@ const UserDashboard = () => {
                       Refresh
                     </Button>
                   </Box>
-
                   <TableContainer component={Paper} sx={{
                     borderRadius: 3,
                     boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
@@ -1145,7 +1132,7 @@ const UserDashboard = () => {
                       <TableBody>
                         {filteredRequests.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={6} sx={{ textAlign: 'center', py: 6 }}>
+                            <TableCell colSpan={5} sx={{ textAlign: 'center', py: 6 }}>
                               <AssignmentIcon sx={{ fontSize: '4rem', color: 'grey.400', mb: 2 }} />
                               <Typography variant="h6" color="text.secondary">
                                 No purchase requests found
@@ -1160,23 +1147,15 @@ const UserDashboard = () => {
                             <TableRow key={req._id} hover sx={{ '&:hover': { bgcolor: 'grey.50' } }}>
                               <TableCell>
                                 <Chip label={req.category} color="primary" size="small" />
-    </TableCell>
-
-    <TableCell>
-
-      <Badge badgeContent={req.quantity} color="secondary">
-
-        <Typography variant="body2">{req.quantity}</Typography>
-
-      </Badge>
-
-    </TableCell>
-
-    <TableCell>
-
-      <Chip
-
-        label={req.status}
+                              </TableCell>
+                              <TableCell>
+                                <Badge badgeContent={req.quantity} color="secondary">
+                                  <Typography variant="body2">{req.quantity}</Typography>
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={req.status}
                                   color={
                                     req.status === 'approved' ? 'success' :
                                     req.status === 'rejected' ? 'error' :
@@ -1255,10 +1234,10 @@ const UserDashboard = () => {
                       </TableBody>
                     </Table>
                   </TableContainer>
-                </Box>
+                </Box>}
 
                 {/* Purchased Data Tab */}
-                <Box sx={{ p: 3 }}>
+                {activeTab === 3 && <Box sx={{ p: 3 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                     <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
                       Purchased Data
@@ -1373,9 +1352,9 @@ const UserDashboard = () => {
                     ))
                   )}
                 </Box>
-
-                {/* Profile Tab */}
-                <Box sx={{ p: 3 }}>
+                }
+                // {/* Profile Tab */}
+                {activeTab === 4 && <Box sx={{ p: 3 }}>
                   <Typography variant="h5" sx={{ mb: 4, fontWeight: 'bold', color: 'primary.main' }}>
                     Profile Settings
                   </Typography>
@@ -1492,15 +1471,15 @@ const UserDashboard = () => {
 
                               <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
                                 {profile.firstName && (
-                              <Button
-                                variant="outlined"
-                                size="large"
-                                onClick={() => setIsEditing(false)}
-                                sx={{ borderRadius: 2, flex: 1 }}
-                                title="Cancel editing and return to view mode"
-                              >
-                                Cancel
-                              </Button>
+                                <Button
+                                  variant="outlined"
+                                  size="large"
+                                  onClick={() => setIsEditing(false)}
+                                  sx={{ borderRadius: 2, flex: 1 }}
+                                  title="Cancel editing and return to view mode"
+                                >
+                                  Cancel
+                                </Button>
                                 )}
                                 <Button
                                   variant="contained"
@@ -1602,8 +1581,8 @@ const UserDashboard = () => {
                       </Card>
                     </Grid>
                   </Grid>
-                </Box>
-              </SwipeableViews>
+                </Box>}
+
             </Card>
       </Container>
     </Box>
@@ -1611,3 +1590,5 @@ const UserDashboard = () => {
 };
 
 export default UserDashboard;
+
+
