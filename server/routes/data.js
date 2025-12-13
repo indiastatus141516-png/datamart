@@ -220,10 +220,15 @@ module.exports = router;
 router.get('/daily-requirements', auth, async (req, res) => {
   try {
     const today = new Date();
+    // Compute current week's Monday (treat Sunday as previous week's Monday)
+    const day = today.getDay(); // 0 (Sun) - 6 (Sat)
+    const diffToMonday = day === 0 ? -6 : 1 - day;
     const monday = new Date(today);
-    monday.setDate(today.getDate() - today.getDay() + 1);
+    monday.setDate(today.getDate() + diffToMonday);
+    monday.setHours(0,0,0,0);
     const friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
+    friday.setHours(23,59,59,999);
 
     const requirementsData = await require('../models/DailyRequirement').find({
       date: {

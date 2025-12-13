@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const UserAllocatedData = require('../models/UserAllocatedData');
 const DailyRequirement = require('../models/DailyRequirement');
 const PurchaseRequest = require('../models/PurchaseRequest');
+const { allocateDataItems } = require('./indexAllocationService');
 
 class DailyAllocationService {
   constructor() {
@@ -47,11 +48,12 @@ class DailyAllocationService {
       console.log(`Allocating data for ${dayOfWeek}`);
 
       // Find all approved purchase requests that are still active
+      // Sort by approvedAt ascending to ensure FIFO allocation among users
       const activeRequests = await PurchaseRequest.find({
         status: 'approved',
         'weekRange.startDate': { $lte: today },
         'weekRange.endDate': { $gte: today }
-      });
+      }).sort({ approvedAt: 1 });
 
       let totalAllocations = 0;
 
@@ -75,39 +77,36 @@ class DailyAllocationService {
             continue;
           }
 
-          // Find available data for this category and day
-          const requirement = await DailyRequirement.findOne({
+          // Allocate inventory directly from DataItem collection using index-based FIFO
+          // allocateDataItems will pick lowest `index` available items and mark them allocated atomically.
+          const allocated = await allocateDataItems(request.category, quantity, request.userId);
+
+          if (allocated === null) {
+            // Concurrency conflict detected — skip this user for now (can be retried later)
+            console.warn(`Concurrency conflict while allocating for user ${request.userId} for ${request.category}`);
+            continue;
+          }
+
+          if (allocated.length === 0) {
+            console.warn(`Insufficient data (DataItem) for ${request.category} on ${dayOfWeek}. Required: ${quantity}, Available: 0`);
+            continue;
+          }
+
+          const allocation = new UserAllocatedData({
+            userId: request.userId,
             category: request.category,
-            dayOfWeek: dayOfWeek,
-            date: {
-              $gte: new Date(today.getFullYear(), today.getMonth(), today.getDate()),
-              $lt: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
-            }
+            allocatedData: allocated,
+            date: today,
+            status: 'delivered',
+            totalAllocated: allocated.length,
+            purchaseRequestId: request._id,
+            dayOfWeek: dayOfWeek
           });
 
-          if (requirement && requirement.uploadedData && requirement.uploadedData.length >= quantity) {
-            // Allocate data
-            const allocatedData = requirement.uploadedData.splice(0, quantity);
+          await allocation.save();
 
-            const allocation = new UserAllocatedData({
-              userId: request.userId,
-              category: request.category,
-              allocatedData: allocatedData,
-              date: today,
-              status: 'delivered',
-              totalAllocated: quantity,
-              purchaseRequestId: request._id,
-              dayOfWeek: dayOfWeek
-            });
-
-            await allocation.save();
-            await requirement.save();
-
-            totalAllocations++;
-            console.log(`Allocated ${quantity} items to user ${request.userId} for ${request.category}`);
-          } else {
-            console.warn(`Insufficient data for ${request.category} on ${dayOfWeek}. Required: ${quantity}, Available: ${requirement?.uploadedData?.length || 0}`);
-          }
+          totalAllocations++;
+          console.log(`Allocated ${allocated.length} items to user ${request.userId} for ${request.category}`);
         }
       }
 

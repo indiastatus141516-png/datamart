@@ -8,13 +8,23 @@ const dataItemSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['available', 'sold', 'reserved'],
+    enum: ['available', 'allocated', 'sold', 'reserved'],
     default: 'available'
   },
   index: {
     type: Number,
     required: true,
     unique: true
+  },
+  allocatedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+    index: true
+  },
+  allocatedAt: {
+    type: Date,
+    default: null
   },
   metadata: {
     type: mongoose.Schema.Types.Mixed,

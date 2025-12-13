@@ -116,15 +116,25 @@ const UserDashboard = () => {
     checkForReorderNotification();
   }, []);
 
-  const loadDailyRequirements = async () => {
+  const loadDailyRequirements = async (startDate, endDate) => {
     try {
-      const res = await dataAPI.getDailyRequirements();
+      const params = {};
+      if (startDate) params.startDate = startDate;
+      if (endDate) params.endDate = endDate;
+      const res = await dataAPI.getDailyRequirements(Object.keys(params).length ? params : undefined);
       setDailyRequirementsState(res.data.requirements || {});
       setDailyRequirementsDates(res.data.dates || {});
     } catch (err) {
       // not fatal for users
     }
   };
+
+  // When user selects a week, refresh daily requirements for that range
+  useEffect(() => {
+    if (selectedWeek.startDate && selectedWeek.endDate) {
+      loadDailyRequirements(selectedWeek.startDate, selectedWeek.endDate);
+    }
+  }, [selectedWeek]);
 
   const [dailyRequirementsState, setDailyRequirementsState] = useState({});
   const [dailyRequirementsDates, setDailyRequirementsDates] = useState({});

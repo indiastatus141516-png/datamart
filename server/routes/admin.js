@@ -7,6 +7,7 @@ const Purchase = require('../models/Purchase');
 const DailyRequirement = require('../models/DailyRequirement');
 const UserAllocatedData = require('../models/UserAllocatedData');
 const auth = require('../middleware/auth');
+const { allocateDataItems } = require('../services/indexAllocationService');
 
 const router = express.Router();
 
@@ -1125,30 +1126,31 @@ async function allocateDataForRequest(request) {
           }
         });
 
-        if (requirement && requirement.uploadedData && requirement.uploadedData.length >= quantity) {
-          // Allocate data from uploaded data
-          const allocatedData = requirement.uploadedData.splice(0, quantity);
-
-          // Create allocation record
-          const allocation = new UserAllocatedData({
-            userId: request.userId,
-            category: request.category,
-            allocatedData: allocatedData,
-            date: new Date(),
-            status: 'allocated',
-            totalAllocated: quantity,
-            purchaseRequestId: request._id,
-            dayOfWeek: day
-          });
-
-          await allocation.save();
-          allocations.push(allocation);
-
-          // Update the requirement to remove allocated data
-          await requirement.save();
-        } else {
-          console.warn(`Insufficient data for ${request.category} on ${day}. Required: ${quantity}, Available: ${requirement?.uploadedData?.length || 0}`);
+        // Allocate directly from DataItem collection (index-based FIFO)
+        const allocated = await allocateDataItems(request.category, quantity, request.userId);
+        if (allocated === null) {
+          console.warn(`Concurrency conflict while allocating for user ${request.userId} on ${day}`);
+          continue;
         }
+
+        if (!allocated || allocated.length === 0) {
+          console.warn(`Insufficient DataItem inventory for ${request.category} on ${day}. Required: ${quantity}, Available: 0`);
+          continue;
+        }
+
+        const allocation = new UserAllocatedData({
+          userId: request.userId,
+          category: request.category,
+          allocatedData: allocated,
+          date: new Date(),
+          status: 'allocated',
+          totalAllocated: allocated.length,
+          purchaseRequestId: request._id,
+          dayOfWeek: day
+        });
+
+        await allocation.save();
+        allocations.push(allocation);
       }
     }
 
@@ -1201,35 +1203,29 @@ router.post('/users/collect-daily', auth, async (req, res) => {
         if (qty <= 0 || alreadyDelivered) continue;
 
         // Find the DailyRequirement for this category and today's date
-        const requirement = await DailyRequirement.findOne({
-          category: reqDoc.category,
-          dayOfWeek,
-          date: {
-            $gte: new Date(today),
-            $lte: new Date(new Date(today).setHours(23,59,59,999))
-          }
-        }).session(session);
+        // Allocate from DataItem collection using the existing transaction/session.
+        // This ensures concurrency safety across users and requests.
+        const allocated = await allocateDataItems(reqDoc.category, qty, userId, session);
 
-        if (!requirement || !Array.isArray(requirement.uploadedData) || requirement.uploadedData.length === 0) {
-          // nothing to allocate for this request today
+        if (allocated === null) {
+          // concurrency conflict — skip this request so others may proceed
+          console.warn(`Concurrency conflict while allocating for user ${userId} request ${reqDoc._id}`);
           continue;
         }
 
-        // Determine how many items we can allocate (may be less than requested)
-        const allocateCount = Math.min(qty, requirement.uploadedData.length);
-        const allocatedData = requirement.uploadedData.splice(0, allocateCount);
-
-        // Save updated requirement (removes allocated items)
-        await requirement.save({ session });
+        if (!allocated || allocated.length === 0) {
+          // nothing allocated for this request today
+          continue;
+        }
 
         // Create allocation record for user
         const allocation = new UserAllocatedData({
           userId,
           category: reqDoc.category,
-          allocatedData,
+          allocatedData: allocated,
           date: new Date(),
           status: 'delivered',
-          totalAllocated: allocateCount,
+          totalAllocated: allocated.length,
           purchaseRequestId: reqDoc._id,
           dayOfWeek
         });
@@ -1237,14 +1233,14 @@ router.post('/users/collect-daily', auth, async (req, res) => {
         await allocation.save({ session });
 
         // Mark delivery completed for this day if full allocation provided
-        if (allocateCount === qty) {
+        if (allocated.length === qty) {
           reqDoc.deliveriesCompleted = reqDoc.deliveriesCompleted || {};
           reqDoc.deliveriesCompleted[dayOfWeek] = true;
         }
 
         await reqDoc.save({ session });
 
-        aggregatedAllocated.push({ purchaseRequestId: reqDoc._id, category: reqDoc.category, allocated: allocateCount, data: allocatedData });
+        aggregatedAllocated.push({ purchaseRequestId: reqDoc._id, category: reqDoc.category, allocated: allocated.length, data: allocated });
       }
 
       await session.commitTransaction();

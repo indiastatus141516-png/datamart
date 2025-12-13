@@ -24,7 +24,7 @@ export const authAPI = {
 export const dataAPI = {
   getCategories: () => api.get('/data/categories'),
   getPreview: (category) => api.get(`/data/preview/${category}`),
-  getDailyRequirements: () => api.get('/data/daily-requirements'),
+  getDailyRequirements: (params) => api.get('/data/daily-requirements', { params }),
   getDailyUploadedData: (category, dayOfWeek, date) => api.get('/data/daily-data', { params: { category, dayOfWeek, date } }),
 };
 
