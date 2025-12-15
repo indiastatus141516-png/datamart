@@ -33,6 +33,7 @@ import {
 import * as XLSX from 'xlsx';
 import { AuthContext } from '../context/AuthContext';
 import { dataAPI, purchaseAPI, userAPI } from '../services/api';
+import { useToast } from '../context/ToastContext';
 
 const UserDashboard = () => {
   const [categories, setCategories] = useState([]);
@@ -66,6 +67,7 @@ const UserDashboard = () => {
   const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false);
   const [selectedWeekOption, setSelectedWeekOption] = useState('');
   const { user, logout } = useContext(AuthContext);
+  const { showToast } = useToast();
   const generateWeekOptions = () => {
     const options = [];
     const today = new Date();
@@ -159,7 +161,7 @@ const UserDashboard = () => {
       setCategories(cats);
       //
     } catch (err) {
-      setError('Failed to load categories');
+      showToast('Failed to load categories', 'error');
     }
   };
 
@@ -170,7 +172,7 @@ const UserDashboard = () => {
       // After loading requests, pre-fetch availability for each request's delivery days
       fetchRequestsAvailability(response.data);
     } catch (err) {
-      setError('Failed to load requests');
+      showToast('Failed to load requests', 'error');
     }
   };
 
@@ -217,7 +219,7 @@ const UserDashboard = () => {
       const response = await purchaseAPI.getPurchased();
       setPurchased(response.data);
     } catch (err) {
-      setError('Failed to load purchased data');
+      showToast('Failed to load purchased data', 'error');
     }
   };
 
@@ -240,7 +242,7 @@ const UserDashboard = () => {
         }
       });
     } catch (err) {
-      setError('Failed to load profile');
+      showToast('Failed to load profile', 'error');
     }
   };
 
@@ -288,11 +290,11 @@ const UserDashboard = () => {
       }
 
       await userAPI.updateProfile({ profile: profileData, email: profile.email });
-      setSuccess('Profile updated successfully');
+      showToast('Profile updated successfully', 'success');
       setIsEditing(false);
       loadProfile(); // Reload profile to reflect changes
     } catch (err) {
-      setError('Failed to update profile');
+      showToast('Failed to update profile', 'error');
     }
   };
 
@@ -302,13 +304,13 @@ const UserDashboard = () => {
       const response = await dataAPI.getPreview(category);
       setPreview(response.data);
     } catch (err) {
-      setError('Failed to load preview');
+      showToast('Failed to load preview', 'error');
     }
   };
 
   const handlePurchaseRequest = async () => {
     if (!selectedCategory) {
-      setError('Please select a category');
+      showToast('Please select a category', 'error');
       return;
     }
 
@@ -316,13 +318,13 @@ const UserDashboard = () => {
       const res = await purchaseAPI.createRequest({ category: selectedCategory, quantity });
       const available = res.data?.availableCount;
       if (available === 0) {
-        setSuccess('Purchase request submitted and queued — admin has not uploaded data yet');
+        showToast('Purchase request submitted and queued — admin has not uploaded data yet', 'success');
       } else {
-        setSuccess('Purchase request submitted successfully');
+        showToast('Purchase request submitted successfully', 'success');
       }
       loadRequests();
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to submit request');
+      showToast(err.response?.data?.message || 'Failed to submit request', 'error');
     }
   };
 
@@ -334,7 +336,7 @@ const UserDashboard = () => {
         paymentId: `demo_${Date.now()}`, // Demo payment ID
         signature: 'demo_signature', // Demo signature
       });
-      setSuccess('Payment successful! Data has been added to your account.');
+      showToast('Payment successful! Data has been added to your account.', 'success');
       loadRequests();
       loadPurchased();
     } catch (err) {
@@ -372,9 +374,9 @@ const UserDashboard = () => {
       });
       const available = res.data?.availableCount;
       if (available === 0) {
-        setSuccess('Weekly purchase request submitted and queued — admin has not uploaded data yet');
+        showToast('Weekly purchase request submitted and queued — admin has not uploaded data yet', 'success');
       } else {
-        setSuccess('Weekly purchase request submitted successfully');
+        showToast('Weekly purchase request submitted successfully', 'success');
       }
       loadRequests();
       // Reset form
@@ -382,7 +384,7 @@ const UserDashboard = () => {
       setDailyQuantities({ mon: 0, tue: 0, wed: 0, thu: 0, fri: 0 });
       setSelectedCategoryForWeek('');
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to submit weekly request');
+      showToast(err.response?.data?.message || 'Failed to submit weekly request', 'error');
     }
   };
 
@@ -616,8 +618,7 @@ const UserDashboard = () => {
 
       <Container maxWidth="xl">
 
-        {error && <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>{error}</Alert>}
-        {success && <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }}>{success}</Alert>}
+        {/* Feedback is shown via toasts (ToastContext) instead of inline Alerts */}
 
         {/* Tabbed Section */}
         <Card sx={{
@@ -1208,17 +1209,23 @@ const UserDashboard = () => {
                                               const target = new Date(start);
                                               target.setDate(start.getDate() + idx);
                                               const iso = target.toISOString().split('T')[0];
-                                              const res = await dataAPI.getDailyUploadedData(req.category, day, iso);
-                                              const rows = res.data.uploadedData || [];
-                                              if (!rows || rows.length === 0) {
-                                                setError('No uploaded rows found');
+
+                                              // Always attempt allocation/download for this date — this ensures first downloader gets FIFO allocation
+                                              const p = await dataAPI.collectDaily({ date: iso });
+                                              const allocations = p.data.allocations || [];
+                                              const allocForReq = allocations.find(a => String(a.purchaseRequestId) === String(req._id));
+                                              if (!allocForReq || !allocForReq.data || allocForReq.data.length === 0) {
+                                                showToast('No allocated data available for this request/date', 'warning');
                                                 return;
                                               }
+
+                                              const rows = allocForReq.data.map(it => ({ ...it.metadata, index: it.index }));
                                               const ws = XLSX.utils.json_to_sheet(rows);
                                               const wb = XLSX.utils.book_new();
                                               XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
                                               XLSX.writeFile(wb, `${req.category}_${label}_${iso}.xlsx`);
-                                              setSuccess('Downloaded uploaded data');
+                                              showToast('Downloaded allocated data', 'success');
+
                                               // mark as downloaded (persist in localStorage so color survives refresh)
                                               const key = `${req._id}-${day}`;
                                               setDownloadedButtons(prev => {
@@ -1227,7 +1234,8 @@ const UserDashboard = () => {
                                                 return next;
                                               });
                                             } catch (err) {
-                                              setError(err.response?.data?.message || 'Failed to download uploaded data');
+                                              const msg = err.response?.data?.message || 'Failed to download allocated data';
+                                              showToast(msg, 'error');
                                             }
                                           }}
                                         >

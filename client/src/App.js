@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { AuthProvider, AuthContext } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import Register from './components/Register';
 import Login from './components/Login';
 import UserDashboard from './components/UserDashboard';
@@ -24,7 +25,8 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <Router>
+        <ToastProvider>
+          <Router>
           <div className="App">
             <Routes>
               <Route path="/register" element={<Register />} />
@@ -44,7 +46,8 @@ function App() {
               <Route path="/" element={<Navigate to="/login" />} />
             </Routes>
           </div>
-        </Router>
+          </Router>
+        </ToastProvider>
       </AuthProvider>
     </ThemeProvider>
   );

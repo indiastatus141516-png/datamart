@@ -64,17 +64,36 @@ router.post('/upload', requireAdmin, upload.fields([{ name: 'file' }, { name: 'c
         normalizedDate.setHours(0,0,0,0);
 
         // Upsert and push uploaded rows into uploadedData
+        // Create DataItem entries for these uploaded rows so allocation always reads from DataItem collection.
+        // We attach delivery metadata so these rows can be queried by date/day.
+        const DataItem = require('../models/DataItem');
+
+        // Get next index to assign sequentially
+        const lastItem = await DataItem.findOne().sort({ index: -1 });
+        let nextIndex = lastItem ? lastItem.index + 1 : 1;
+
+        const dataItems = jsonData.map((row) => ({
+          category: categoryDoc.name,
+          status: 'available',
+          index: nextIndex++,
+          metadata: { ...row, deliveryDate: normalizedDate.toISOString().split('T')[0], dayOfWeek: dayOfWeek.toLowerCase() }
+        }));
+
+        await DataItem.insertMany(dataItems);
+
+        // Ensure a DailyRequirement exists for reporting (do NOT store uploaded rows in it)
         const requirement = await DailyRequirement.findOneAndUpdate(
           { category: categoryDoc.name, dayOfWeek: dayOfWeek.toLowerCase(), date: normalizedDate },
-          { $push: { uploadedData: { $each: jsonData } }, $setOnInsert: { createdBy: req.user.userId } },
+          { $setOnInsert: { createdBy: req.user.userId }, $set: { quantity: (await DailyRequirement.findOne({ category: categoryDoc.name, dayOfWeek: dayOfWeek.toLowerCase(), date: normalizedDate }))?.quantity || 0 } },
           { upsert: true, new: true }
         );
 
         // If requirement has a quantity and we now meet or exceed it, trigger allocation for today
         try {
           if (requirement && typeof requirement.quantity === 'number' && requirement.quantity > 0) {
-            const uploadedCount = Array.isArray(requirement.uploadedData) ? requirement.uploadedData.length : 0;
-            if (uploadedCount >= requirement.quantity) {
+            // Count available DataItems for this delivery date/category
+            const availableCount = await DataItem.countDocuments({ category: categoryDoc.name, status: 'available', 'metadata.deliveryDate': normalizedDate.toISOString().split('T')[0] });
+            if (availableCount >= requirement.quantity) {
               // Trigger allocation service to allocate for users (best-effort)
               await dailyAllocationService.triggerManualAllocation();
             }
@@ -248,20 +267,43 @@ router.get('/daily-requirements', auth, async (req, res) => {
 
       const day = r.dayOfWeek;
       const qty = r.quantity || 0;
-      const uploaded = Array.isArray(r.uploadedData) ? r.uploadedData.length : 0;
+      // Count uploaded DataItems for this requirement date/category
+      const DataItem = require('../models/DataItem');
+      const isoDate = new Date(r.date).toISOString().split('T')[0];
+      const uploaded = DataItem.countDocuments({ category: r.category, status: 'available', 'metadata.deliveryDate': isoDate }).catch(() => 0);
+
+      // if uploaded is a Promise (countDocuments) resolve later when building response
+      // store the promise in place, we'll normalize below
 
       requirements[cat][day] = { required: qty, uploaded };
       requirements[cat].total += qty;
     });
 
-    Object.values(requirements).forEach(cat => {
-      grandTotal.monday += cat.monday.required || 0;
-      grandTotal.tuesday += cat.tuesday.required || 0;
-      grandTotal.wednesday += cat.wednesday.required || 0;
-      grandTotal.thursday += cat.thursday.required || 0;
-      grandTotal.friday += cat.friday.required || 0;
-      grandTotal.total += cat.total || 0;
-    });
+    // Resolve any uploaded counts that are promises
+    const resolveUploads = async () => {
+      for (const cat of Object.values(requirements)) {
+        for (const d of ['monday','tuesday','wednesday','thursday','friday']) {
+          if (cat[d] && typeof cat[d].uploaded?.then === 'function') {
+            try {
+              cat[d].uploaded = await cat[d].uploaded;
+            } catch (e) {
+              cat[d].uploaded = 0;
+            }
+          }
+        }
+      }
+
+      Object.values(requirements).forEach(cat => {
+        grandTotal.monday += cat.monday.required || 0;
+        grandTotal.tuesday += cat.tuesday.required || 0;
+        grandTotal.wednesday += cat.wednesday.required || 0;
+        grandTotal.thursday += cat.thursday.required || 0;
+        grandTotal.friday += cat.friday.required || 0;
+        grandTotal.total += cat.total || 0;
+      });
+    };
+
+    await resolveUploads();
 
     // Format dates
     const formatDate = (date) => {
@@ -292,22 +334,25 @@ router.get('/daily-data', auth, async (req, res) => {
     const { category, dayOfWeek, date } = req.query;
     if (!category || !dayOfWeek || !date) return res.status(400).json({ message: 'category, dayOfWeek and date are required' });
 
+    // Query DataItem documents that were uploaded for this delivery date
     const reqDate = new Date(date);
-    const DailyRequirement = require('../models/DailyRequirement');
-    const requirement = await DailyRequirement.findOne({
-      category,
-      dayOfWeek: dayOfWeek.toLowerCase(),
-      date: {
-        $gte: new Date(reqDate.setHours(0,0,0,0)),
-        $lte: new Date(reqDate.setHours(23,59,59,999))
-      }
-    });
+    const isoDate = new Date(reqDate.setHours(0,0,0,0)).toISOString().split('T')[0];
+    const DataItem = require('../models/DataItem');
 
-    if (!requirement || !Array.isArray(requirement.uploadedData) || requirement.uploadedData.length === 0) {
+    const items = await DataItem.find({
+      category,
+      status: 'available',
+      'metadata.deliveryDate': isoDate,
+      'metadata.dayOfWeek': dayOfWeek.toLowerCase()
+    }).sort({ index: 1 });
+
+    if (!items || items.length === 0) {
       return res.status(404).json({ message: 'No uploaded data found for this category/day' });
     }
 
-    res.json({ uploadedData: requirement.uploadedData });
+    // Return the original row metadata to the client for download
+    const uploadedData = items.map(it => ({ ...it.metadata, index: it.index }));
+    res.json({ uploadedData });
   } catch (error) {
     console.error('Get daily uploaded data error:', error);
     res.status(500).json({ message: 'Server error' });

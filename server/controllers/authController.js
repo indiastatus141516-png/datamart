@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const User = require('../models/User');
+const Counter = require('../models/Counter');
 
 exports.register = async (req, res) => {
   try {
@@ -20,7 +21,16 @@ exports.register = async (req, res) => {
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
-    const userId = `user_${uuidv4()}`;
+
+    // Atomically increment a counter to generate sequential user IDs: user01, user02, ...
+    const seqDoc = await Counter.findOneAndUpdate(
+      { _id: 'userId' },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+    const seq = seqDoc.seq || 1;
+    // Fixed 5-digit zero-padding: user00001 ... user10000
+    const userId = `user${seq.toString().padStart(5, '0')}`;
 
     const user = new User({
       userId,

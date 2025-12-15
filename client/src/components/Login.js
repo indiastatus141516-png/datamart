@@ -1,14 +1,16 @@
 import React, { useState, useContext } from 'react';
-import { TextField, Button, Paper, Typography, Alert } from '@mui/material';
+import { TextField, Button, Paper, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { authAPI } from '../services/api';
+import { useToast } from '../context/ToastContext';
 
 const Login = () => {
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const { login } = useContext(AuthContext);
   const navigate = useNavigate();
+  const { showToast } = useToast();
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -21,9 +23,12 @@ const Login = () => {
     try {
       const response = await authAPI.login(formData);
       login(response.data.user, response.data.token);
+      showToast('Logged in successfully', 'success');
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed');
+      const msg = err.response?.data?.message || 'Login failed';
+      setError(msg);
+      showToast(msg, 'error');
     }
   };
 
@@ -32,7 +37,7 @@ const Login = () => {
       <Typography variant="h5" component="h1" gutterBottom>
         Login
       </Typography>
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {/* messages shown via toast only */}
       <form onSubmit={handleSubmit}>
         <TextField
           fullWidth

@@ -26,11 +26,7 @@ const dailyRequirementSchema = new mongoose.Schema({
     type: String,
     required: true // admin userId
   },
-  uploadedData: {
-    type: [mongoose.Schema.Types.Mixed],
-    default: []
-  }
-  ,
+  
   // Track per-purchase-request contributions so we can sum and decrement safely
   contributions: {
     type: [

@@ -26,6 +26,7 @@ export const dataAPI = {
   getPreview: (category) => api.get(`/data/preview/${category}`),
   getDailyRequirements: (params) => api.get('/data/daily-requirements', { params }),
   getDailyUploadedData: (category, dayOfWeek, date) => api.get('/data/daily-data', { params: { category, dayOfWeek, date } }),
+  collectDaily: (data) => api.post('/admin/users/collect-daily', data),
 };
 
 export const purchaseAPI = {

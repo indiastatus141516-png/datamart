@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { TextField, Button, Paper, Typography, Alert } from '@mui/material';
+import { TextField, Button, Paper, Typography } from '@mui/material';
 import { authAPI } from '../services/api';
+import { useToast } from '../context/ToastContext';
 
 const Register = () => {
   const [formData, setFormData] = useState({ email: '', password: '', confirmPassword: '' });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const { showToast } = useToast();
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -24,9 +26,12 @@ const Register = () => {
     try {
       await authAPI.register({ email: formData.email, password: formData.password });
       setSuccess('Registration successful! Please wait for admin approval.');
+      showToast('Registration successful! Please wait for admin approval.', 'success');
       setFormData({ email: '', password: '', confirmPassword: '' });
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed');
+      const msg = err.response?.data?.message || 'Registration failed';
+      setError(msg);
+      showToast(msg, 'error');
     }
   };
 
@@ -35,8 +40,7 @@ const Register = () => {
       <Typography variant="h5" component="h1" gutterBottom>
         Register
       </Typography>
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
+      {/* messages shown via toast only */}
       <form onSubmit={handleSubmit}>
         <TextField
           fullWidth

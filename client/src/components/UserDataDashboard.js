@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { userDataAPI } from '../services/api';
+import { useToast } from '../context/ToastContext';
 import './UserDataDashboard.css';
 
 const UserDataDashboard = () => {
   const [allocatedData, setAllocatedData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { showToast } = useToast();
   const [selectedAllocation, setSelectedAllocation] = useState(null);
 
   useEffect(() => {
@@ -18,7 +20,8 @@ const UserDataDashboard = () => {
       const response = await userDataAPI.getAllocatedData();
       setAllocatedData(response.data);
     } catch (err) {
-      setError('Failed to fetch allocated data');
+      const msg = 'Failed to fetch allocated data';
+      showToast(msg, 'error');
       console.error('Error fetching allocated data:', err);
     } finally {
       setLoading(false);
@@ -34,7 +37,8 @@ const UserDataDashboard = () => {
         details: response.data
       });
     } catch (err) {
-      setError('Failed to fetch allocation details');
+      const msg = 'Failed to fetch allocation details';
+      showToast(msg, 'error');
       console.error('Error fetching allocation details:', err);
     }
   };
@@ -54,7 +58,8 @@ const UserDataDashboard = () => {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      setError('Failed to download data');
+      const msg = 'Failed to download data';
+      showToast(msg, 'error');
       console.error('Error downloading data:', err);
     }
   };
@@ -72,7 +77,7 @@ const UserDataDashboard = () => {
   }
 
   if (error) {
-    return <div className="error">{error}</div>;
+    // error shown via toast
   }
 
   return (

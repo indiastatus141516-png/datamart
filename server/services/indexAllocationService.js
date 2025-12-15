@@ -14,7 +14,10 @@ const DataItem = require('../models/DataItem');
  *  - userId: ObjectId or string
  *  - session: optional mongoose session
  */
-async function allocateDataItems(category, quantity, userId, session = null) {
+/**
+ * options: { deliveryDate: 'YYYY-MM-DD', dayOfWeek: 'monday' }
+ */
+async function allocateDataItems(category, quantity, userId, session = null, options = {}) {
   const externalSession = !!session;
   if (!externalSession) {
     session = await DataItem.startSession();
@@ -22,8 +25,12 @@ async function allocateDataItems(category, quantity, userId, session = null) {
   }
 
   try {
-    // Find lowest-index available items for the category
-    const items = await DataItem.find({ category, status: 'available' })
+    // Build query to select lowest-index available items for the category
+    const query = { category, status: 'available' };
+    if (options.deliveryDate) query['metadata.deliveryDate'] = options.deliveryDate;
+    if (options.dayOfWeek) query['metadata.dayOfWeek'] = options.dayOfWeek;
+
+    const items = await DataItem.find(query)
       .sort({ index: 1 })
       .limit(quantity)
       .session(session)
@@ -40,9 +47,14 @@ async function allocateDataItems(category, quantity, userId, session = null) {
     const ids = items.map(i => i._id);
 
     // Atomically update only those still available (prevent race)
+    // Require a valid MongoDB ObjectId for allocatedTo to maintain referential integrity
+    if (!mongoose.isValidObjectId(userId)) {
+      throw new Error('Invalid mongo userId passed to allocateDataItems');
+    }
+    const allocatedToValue = new mongoose.Types.ObjectId(userId);
     const res = await DataItem.updateMany(
       { _id: { $in: ids }, status: 'available' },
-      { $set: { status: 'allocated', allocatedTo: mongoose.Types.ObjectId(userId), allocatedAt: new Date() } }
+      { $set: { status: 'allocated', allocatedTo: allocatedToValue, allocatedAt: new Date() } }
     ).session(session);
 
     // If some items were already taken by concurrent allocators, abort/indicate conflict

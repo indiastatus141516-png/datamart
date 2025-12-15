@@ -153,12 +153,16 @@ router.delete('/users/bulk/delete', requireAdmin, async (req, res) => {
                   dr.quantity = Math.max(0, (dr.quantity || 0) - qty);
                 }
 
-                // If no contributions left and no uploaded data and quantity 0 -> remove document
-                if ((dr.contributions || []).length === 0 && (!dr.uploadedData || dr.uploadedData.length === 0) && dr.quantity === 0) {
-                  await DailyRequirement.deleteOne({ _id: dr._id }).session(session);
-                } else {
-                  await dr.save({ session });
+                // If no contributions left and no uploaded DataItem rows for this date and quantity 0 -> remove document
+                if ((dr.contributions || []).length === 0 && dr.quantity === 0) {
+                  const iso = dateOnly.toISOString().split('T')[0];
+                  const count = await DataItem.countDocuments({ category: dr.category, 'metadata.deliveryDate': iso, 'metadata.dayOfWeek': dr.dayOfWeek }).session(session);
+                  if (count === 0) {
+                    await DailyRequirement.deleteOne({ _id: dr._id }).session(session);
+                    continue;
+                  }
                 }
+                await dr.save({ session });
               }
             }
           }
@@ -234,11 +238,15 @@ router.delete('/users/:userId', requireAdmin, async (req, res) => {
                   dr.quantity = Math.max(0, (dr.quantity || 0) - qty);
                 }
 
-                if ((dr.contributions || []).length === 0 && (!dr.uploadedData || dr.uploadedData.length === 0) && dr.quantity === 0) {
-                  await DailyRequirement.deleteOne({ _id: dr._id }).session(session);
-                } else {
-                  await dr.save({ session });
+                if ((dr.contributions || []).length === 0 && dr.quantity === 0) {
+                  const iso = dateOnly.toISOString().split('T')[0];
+                  const count = await DataItem.countDocuments({ category: dr.category, 'metadata.deliveryDate': iso, 'metadata.dayOfWeek': dr.dayOfWeek }).session(session);
+                  if (count === 0) {
+                    await DailyRequirement.deleteOne({ _id: dr._id }).session(session);
+                    continue;
+                  }
                 }
+                await dr.save({ session });
               }
             }
           }
@@ -819,13 +827,29 @@ router.post('/daily-data/upload', requireAdmin, async (req, res) => {
       return res.status(400).json({ message: 'Invalid day of week' });
     }
 
-    // Find or create daily requirement and add uploaded data
+    // Store uploaded rows as DataItem documents with delivery metadata; do NOT store the raw rows in DailyRequirement.uploadedData
+    const DataItem = require('../models/DataItem');
+
+    const normalizedDate = new Date(date);
+    normalizedDate.setHours(0,0,0,0);
+
+    // Determine next index for sequential indexing
+    const lastItem = await DataItem.findOne().sort({ index: -1 });
+    let nextIndex = lastItem ? lastItem.index + 1 : 1;
+
+    const dataItems = data.map(row => ({
+      category,
+      status: 'available',
+      index: nextIndex++,
+      metadata: { ...row, deliveryDate: normalizedDate.toISOString().split('T')[0], dayOfWeek: dayOfWeek.toLowerCase() }
+    }));
+
+    await DataItem.insertMany(dataItems);
+
+    // Ensure a DailyRequirement exists for reporting (without storing uploaded rows)
     const requirement = await DailyRequirement.findOneAndUpdate(
-      { category, dayOfWeek: dayOfWeek.toLowerCase(), date: new Date(date) },
-      {
-        $push: { uploadedData: { $each: data } },
-        createdBy: req.user.userId
-      },
+      { category, dayOfWeek: dayOfWeek.toLowerCase(), date: normalizedDate },
+      { $setOnInsert: { createdBy: req.user.userId } },
       { upsert: true, new: true }
     );
 
@@ -1076,12 +1100,19 @@ async function rebuildDailyRequirements(startDate, endDate) {
       }
     }
 
-    // Optionally cleanup any DailyRequirement in range that no longer has contributions and has no uploadedData
-    await DailyRequirement.deleteMany({
+    // Optionally cleanup any DailyRequirement in range that no longer has contributions and has no uploaded DataItem rows
+    const candidates = await DailyRequirement.find({
       date: { $gte: start, $lte: end },
       $or: [ { contributions: { $exists: true, $size: 0 } }, { contributions: { $exists: false } } ],
-      uploadedData: { $size: 0 }
+      quantity: 0
     });
+    for (const dr of candidates) {
+      const iso = new Date(dr.date).toISOString().split('T')[0];
+      const count = await DataItem.countDocuments({ category: dr.category, 'metadata.deliveryDate': iso, 'metadata.dayOfWeek': dr.dayOfWeek });
+      if (count === 0) {
+        await DailyRequirement.deleteOne({ _id: dr._id });
+      }
+    }
 
     console.log(`Rebuilt daily requirements for ${startDate.toISOString().split('T')[0]} -> ${endDate.toISOString().split('T')[0]}`);
   } catch (error) {
@@ -1127,7 +1158,20 @@ async function allocateDataForRequest(request) {
         });
 
         // Allocate directly from DataItem collection (index-based FIFO)
-        const allocated = await allocateDataItems(request.category, quantity, request.userId);
+        // Resolve request.userId (string) to real User._id for allocatedTo if possible
+        let allocatedTo = request.userId;
+        try {
+          const userDoc = await User.findOne({ userId: request.userId }).select('_id');
+          if (userDoc) allocatedTo = userDoc._id;
+        } catch (e) {
+          // fallback to string id
+        }
+        // Ensure allocatedTo is a Mongo ObjectId before calling allocator
+        if (!require('mongoose').isValidObjectId(allocatedTo)) {
+          console.error('allocateDataForRequest: invalid mongo user id, skipping allocation', { purchaseRequestUserId: request.userId });
+          continue;
+        }
+        const allocated = await allocateDataItems(request.category, quantity, allocatedTo);
         if (allocated === null) {
           console.warn(`Concurrency conflict while allocating for user ${request.userId} on ${day}`);
           continue;
@@ -1157,33 +1201,59 @@ async function allocateDataForRequest(request) {
     console.log(`Allocated data for user ${request.userId}: ${allocations.length} allocations`);
     return allocations;
   } catch (error) {
-    console.error('Data allocation error:', error);
+    console.error('Data allocation error:', error && error.stack ? error.stack : error);
     throw error;
   }
 }
 
 // User endpoint: collect/ download today's allocated data (triggered by user's action button)
 router.post('/users/collect-daily', auth, async (req, res) => {
-  const userId = req.user.userId;
+  const userIdStr = req.user.userId; // business ID string for UserAllocatedData.userId
+  const mongoUserId = req.user._id || req.user.id; // must be Mongo ObjectId
+  // Validate mongoUserId
+  const mongoose = require('mongoose');
+  if (!mongoose.isValidObjectId(mongoUserId)) {
+    console.error('[COLLECT-DAILY] Invalid mongo user id for authenticated user', { mongoUserId, businessUserId: userIdStr });
+    return res.status(400).json({ message: 'Invalid user ObjectId' });
+  }
+  const allocatedToObjId = new mongoose.Types.ObjectId(mongoUserId);
+  // Defensive log
+  const { date } = req.body || req.query || {};
+  console.log('[COLLECT-DAILY] start', { mongoUserId: allocatedToObjId.toString(), businessUserId: userIdStr, date });
   try {
-    const today = new Date();
-    today.setHours(0,0,0,0);
+    // Allow optional date override (ISO yyyy-mm-dd) to collect for a specific delivery date
+    const { date } = req.body || req.query || {};
+    // Parse `YYYY-MM-DD` into a local Date to avoid timezone shifts that make the dayOfWeek wrong.
+    const parseLocalDate = (dstr) => {
+      if (!dstr) return new Date();
+      const parts = String(dstr).split('-').map(p => parseInt(p, 10));
+      if (parts.length !== 3 || parts.some(isNaN)) return new Date(dstr);
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    };
+    const targetDate = date ? parseLocalDate(date) : new Date();
+    targetDate.setHours(0,0,0,0);
 
-    const dayIdx = today.getDay(); // 0=Sun,1=Mon...
+    const dayIdx = targetDate.getDay(); // 0=Sun,1=Mon...
     const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
     const dayOfWeek = days[dayIdx];
 
     const validDays = ['monday','tuesday','wednesday','thursday','friday'];
     if (!validDays.includes(dayOfWeek)) {
-      return res.status(400).json({ message: 'No scheduled deliveries today' });
+      return res.status(400).json({ message: 'No scheduled deliveries on this date' });
     }
 
-    // Find approved purchase requests for this user that include today in their weekRange
-    const requests = await PurchaseRequest.find({
-      userId,
-      status: 'approved',
-      'weekRange.startDate': { $lte: today },
-      'weekRange.endDate': { $gte: today }
+    // Fetch all approved purchase requests for this user, then filter by the targetDate using date-only comparison
+    const allApproved = await PurchaseRequest.find({ userId: userIdStr, status: 'approved' });
+    const requests = allApproved.filter(r => {
+      try {
+        const s = new Date(r.weekRange.startDate);
+        const e = new Date(r.weekRange.endDate);
+        s.setHours(0,0,0,0);
+        e.setHours(23,59,59,999);
+        return targetDate >= s && targetDate <= e;
+      } catch (e) {
+        return false;
+      }
     });
 
     if (!requests.length) {
@@ -1196,20 +1266,24 @@ router.post('/users/collect-daily', auth, async (req, res) => {
     try {
       const aggregatedAllocated = [];
 
+      const isoDate = targetDate.toISOString().split('T')[0];
+
       for (const reqDoc of requests) {
         const qty = reqDoc.dailyQuantities?.[dayOfWeek] || 0;
         const alreadyDelivered = reqDoc.deliveriesCompleted?.[dayOfWeek];
 
         if (qty <= 0 || alreadyDelivered) continue;
 
-        // Find the DailyRequirement for this category and today's date
-        // Allocate from DataItem collection using the existing transaction/session.
-        // This ensures concurrency safety across users and requests.
-        const allocated = await allocateDataItems(reqDoc.category, qty, userId, session);
+        // Allocate from DataItem collection using the existing transaction/session for this delivery date
+        if (!require('mongoose').isValidObjectId(allocatedToObjId)) {
+          console.error('[COLLECT-DAILY] invalid allocatedToObjId, skipping', { allocatedToObjId: String(allocatedToObjId), purchaseRequestId: reqDoc._id });
+          continue;
+        }
+        const allocated = await allocateDataItems(reqDoc.category, qty, allocatedToObjId, session, { deliveryDate: isoDate, dayOfWeek });
 
         if (allocated === null) {
           // concurrency conflict — skip this request so others may proceed
-          console.warn(`Concurrency conflict while allocating for user ${userId} request ${reqDoc._id}`);
+          console.warn('[COLLECT-DAILY] concurrency conflict', { mongoUserId: allocatedToObjId.toString(), purchaseRequestId: reqDoc._id.toString() });
           continue;
         }
 
@@ -1220,7 +1294,7 @@ router.post('/users/collect-daily', auth, async (req, res) => {
 
         // Create allocation record for user
         const allocation = new UserAllocatedData({
-          userId,
+          userId: userIdStr,
           category: reqDoc.category,
           allocatedData: allocated,
           date: new Date(),
@@ -1255,11 +1329,11 @@ router.post('/users/collect-daily', auth, async (req, res) => {
     } catch (err) {
       await session.abortTransaction();
       session.endSession();
-      console.error('Collect daily transaction error:', err);
+      console.error('Collect daily transaction error:', err && err.stack ? err.stack : err);
       return res.status(500).json({ message: 'Failed to allocate data for today' });
     }
   } catch (error) {
-    console.error('Collect daily error:', error);
+    console.error('Collect daily error:', error && error.stack ? error.stack : error);
     return res.status(500).json({ message: 'Server error' });
   }
 });
